@@ -40,5 +40,7 @@ wordpress/ia/*.log
 wordpress/ia/debug.txt
 __pycache__/
 
-# Arquivos padrão que o WordPress recria a cada instalação
-wordpress/wp-content/themes/twenty*/
+# Temas e pastas de atualização do WordPress: recriados pelo próprio WordPress, não vão para o Git
+wordpress/wp-content/themes/
+wordpress/wp-content/upgrade/
+wordpress/wp-content/upgrade-temp-backup/
