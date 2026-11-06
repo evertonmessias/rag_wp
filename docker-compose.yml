@@ -102,17 +102,21 @@ services:
         chown www-data:www-data /var/www/html/ia /var/www/html/ia/debug.log
         exec docker-entrypoint.sh apache2-foreground
 
-  # Visualizador de logs em tempo real no navegador: http://localhost:${DOZZLE_PORT}
-  dozzle:
-    image: amir20/dozzle:latest
-    container_name: rag_wp_logs
+  # Administração do MySQL no navegador: http://localhost:${PMA_PORT}
+  # Login com MYSQL_USER/MYSQL_PASSWORD (banco do WordPress) ou root/MYSQL_ROOT_PASSWORD
+  phpmyadmin:
+    image: phpmyadmin:5.2
+    container_name: rag_wp_pma
     restart: always
+    depends_on:
+      db:
+        condition: service_healthy
     ports:
-      - "127.0.0.1:${DOZZLE_PORT}:8080"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - "127.0.0.1:${PMA_PORT}:80"
     environment:
-      DOZZLE_FILTER: "name=rag_wp_"
+      PMA_HOST: db
+      PMA_PORT: 3306
+      UPLOAD_LIMIT: 256M
 
 volumes:
   db_data:
