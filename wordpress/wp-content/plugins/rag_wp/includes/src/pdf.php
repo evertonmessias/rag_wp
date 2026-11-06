@@ -95,8 +95,7 @@ function rag_wp_indexar_arquivo($post_id, $arquivo)
         return ['ok' => false, 'msg' => 'Não foi possível extrair texto (PDF escaneado?)'];
     }
 
-    $relativo = substr($arquivo, strlen(rag_wp_attachments_dir($post_id)));
-    $url = rag_wp_attachments_url($post_id) . implode('/', array_map('rawurlencode', explode('/', $relativo)));
+    $url = rag_wp_url_arquivo($post_id, $arquivo);
 
     $ok = $wpdb->insert($tabela, [
         'id_post' => $post_id,

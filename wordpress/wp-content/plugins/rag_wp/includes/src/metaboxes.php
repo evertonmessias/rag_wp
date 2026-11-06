@@ -38,7 +38,39 @@ function rag_wp_render_anexos($post)
         <strong>Indexar PDFs</strong> (barra de ferramentas ou botão direito).
     </p>
     <iframe class="rag-wp-elfinder" src="<?php echo esc_url($src); ?>"></iframe>
+
+    <div class="rag-wp-exibir">
+        <?php wp_nonce_field('rag_wp_exibir', 'rag_wp_exibir_nonce'); ?>
+        <label>
+            <input type="checkbox" name="rag_wp_exibir_anexos" value="1"
+                <?php checked(get_post_meta($post->ID, RAG_WP_META_EXIBIR, true), '1'); ?>>
+            <strong>Exibir anexos no post?</strong>
+        </label>
+        <p class="description">
+            Marcado: a lista de anexos aparece automaticamente abaixo do conteúdo.<br>
+            Para escolher o local, deixe desmarcado e coloque no conteúdo
+            <code>[rag_wp_anexos id="<?php echo (int) $post->ID; ?>"]</code>
+            (ou <code>[rag_wp_anexos id="<?php echo (int) $post->ID; ?>" pasta="nome da pasta"]</code> para uma pasta só).
+            Este shortcode só funciona neste post.
+        </p>
+    </div>
     <?php
+}
+
+// Salva a opção "Exibir anexos no post?" ****************************************************************
+add_action('save_post', 'rag_wp_salvar_exibir', 10, 2);
+function rag_wp_salvar_exibir($post_id, $post)
+{
+    // O campo só existe quando o gerenciador está na tela (post já salvo antes)
+    if (!isset($_POST['rag_wp_exibir_nonce']) || !wp_verify_nonce($_POST['rag_wp_exibir_nonce'], 'rag_wp_exibir')) return;
+    if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
+    if (wp_is_post_revision($post_id) || !current_user_can('edit_post', $post_id)) return;
+
+    if (!empty($_POST['rag_wp_exibir_anexos'])) {
+        update_post_meta($post_id, RAG_WP_META_EXIBIR, '1');
+    } else {
+        delete_post_meta($post_id, RAG_WP_META_EXIBIR);
+    }
 }
 
 // Mostra o gerenciador logo abaixo do editor de conteúdo

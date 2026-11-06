@@ -17,6 +17,13 @@ function rag_wp_attachments_url($post_id = null)
     return $post_id ? $url . '/' . intval($post_id) : $url;
 }
 
+// URL pública de um arquivo (caminho absoluto) dentro da pasta do post
+function rag_wp_url_arquivo($post_id, $arquivo)
+{
+    $relativo = ltrim(substr($arquivo, strlen(rag_wp_attachments_dir($post_id))), '/');
+    return rag_wp_attachments_url($post_id) . '/' . implode('/', array_map('rawurlencode', explode('/', $relativo)));
+}
+
 // Só posts comuns têm gerenciador de anexos (não há post types personalizados)
 function rag_wp_post_types()
 {

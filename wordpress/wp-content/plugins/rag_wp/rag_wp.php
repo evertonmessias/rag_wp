@@ -56,4 +56,5 @@ require_once RAG_WP_DIR . 'includes/functions.php';
 require_once RAG_WP_DIR . 'includes/src/pdf.php';
 require_once RAG_WP_DIR . 'includes/elfinder.php';
 require_once RAG_WP_DIR . 'includes/src/metaboxes.php';
+require_once RAG_WP_DIR . 'includes/src/exibir.php';
 require_once RAG_WP_DIR . 'includes/pages/menu.php';

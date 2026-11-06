@@ -1,0 +1,41 @@
+/* Arquivo: wp-content/plugins/rag_wp/assets/css/rag_wp_front.css
+   Lista de anexos no site. Herda fonte e cores do tema; só define o essencial. */
+
+.rag-wp-anexos {
+    margin: 2em 0;
+}
+
+.rag-wp-anexos .rag-wp-anexos-titulo {
+    margin-bottom: .5em;
+}
+
+.rag-wp-anexos-grupo {
+    margin-bottom: 1.5em;
+}
+
+.rag-wp-anexos-grupo h3 {
+    margin: 1em 0 .4em;
+}
+
+.rag-wp-anexos table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.rag-wp-anexos th,
+.rag-wp-anexos td {
+    padding: .5em .6em;
+    text-align: left;
+    border-bottom: 1px solid rgba(128, 128, 128, .3);
+    word-break: break-word;
+}
+
+.rag-wp-anexos tbody tr:nth-child(odd) {
+    background: rgba(128, 128, 128, .07);
+}
+
+.rag-wp-anexos .rag-wp-tamanho {
+    width: 1%;
+    white-space: nowrap;
+    text-align: right;
+}
