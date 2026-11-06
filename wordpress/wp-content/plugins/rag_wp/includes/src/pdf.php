@@ -1,343 +1,189 @@
 <?php
-// Arquivo: wp-content/plugins/novoicode/includes/src/pdf.php
-//Search PDF *************************************************************************************
-add_filter('pre_get_posts', function ($query) {
-    if ($query->is_search() && $query->is_main_query()) {
-        $termo = $query->get('s');
+// Arquivo: wp-content/plugins/rag_wp/includes/src/pdf.php
+// Extração de texto e indexação dos PDFs anexados aos posts (tabela {prefix}pdf_index)
 
-        global $wpdb;
-        $tabela = $wpdb->prefix . 'pdf_index';
-
-        $resultados = $wpdb->get_results($wpdb->prepare("
-            SELECT arquivo FROM $tabela WHERE texto LIKE %s
-        ", '%' . $wpdb->esc_like($termo) . '%'));
-
-        if ($resultados) {
-            add_filter('the_content', function ($content) use ($resultados, $termo) {
-                $lista = "<h3>Resultados nos PDFs:</h3><ul>";
-                foreach ($resultados as $r) {
-                    $lista .= "<li><a href='/wp-content/uploads/pdfs/{$r->arquivo}' target='_blank'>{$r->arquivo}</a></li>";
-                }
-                $lista .= "</ul>";
-                return $lista . $content;
-            });
-        }
-    }
-    return $query;
-});
-
-
-// Converter PDF ****************************************************************************
-function novoicode_converter_pdf()
-{
-    if (!isset($_POST['paths']) || !isset($_POST['destino'])) {
-        wp_send_json(['sucesso' => false, 'mensagem' => 'Parâmetros ausentes.']);
-    }
-
-    $paths = json_decode(stripslashes($_POST['paths']), true);
-    if (json_last_error() !== JSON_ERROR_NONE) {
-        $paths = is_array($_POST['paths']) ? $_POST['paths'] : (array) $_POST['paths'];
-    }
-
-    $paths = array_filter((array) $paths);
-    $pdfsParaJuntar = [];
-
-    foreach ($paths as $path) {
-        $cleanPath = realpath(trim(stripslashes($path), '"\''));
-        if ($cleanPath && file_exists($cleanPath)) {
-            $ext = strtolower(pathinfo($cleanPath, PATHINFO_EXTENSION));
-            if ($ext === 'doc' || $ext === 'docx') {
-                $pdfsParaJuntar[] = '"' . $cleanPath . '"';
-            }
-        }
-    }
-
-    if (empty($pdfsParaJuntar)) {
-        wp_send_json(['sucesso' => false, 'mensagem' => 'Nenhum DOC válido encontrado.']);
-    }
-
-    $destino = trim(stripslashes($_POST['destino']), '"\'');
-    $destPath = dirname($destino);
-
-    if (!file_exists($destPath)) {
-        wp_mkdir_p($destPath);
-    }
-
-    if (!is_writable($destPath)) {
-        wp_send_json(['sucesso' => false, 'mensagem' => 'Diretório de destino não tem permissão de escrita.']);
-    }
-
-    $strPDFsParaJuntar = implode(" ", $pdfsParaJuntar);
-
-
-    // Comando para conversão
-    exec("export HOME=/var/www && export XDG_CONFIG_HOME=/var/www/.config && export XDG_CACHE_HOME=/var/www/.cache && soffice --headless --convert-to pdf --outdir $destPath $strPDFsParaJuntar 2>&1", $output, $retorno);
-
-    if ($retorno !== 0) {
-        wp_send_json(['sucesso' => false, 'mensagem' => 'Erro ao executar script: ' . implode("\n", $output)]);
-    }
-
-    wp_send_json([
-        'sucesso' => true,
-        'arquivos' => count($pdfsParaJuntar)
-    ]);
+if (!defined('ABSPATH')) {
+    exit;
 }
-add_action('wp_ajax_novoicode_converter_pdf', 'novoicode_converter_pdf');
 
-
-
-
-// Juntar PDF ****************************************************************************
-function novoicode_exportar_pdf()
+// Extrair texto do PDF ***********************************************************************
+function rag_wp_extrair_texto_pdf($arquivo)
 {
-    if (!isset($_POST['paths']) || !isset($_POST['destino'])) {
-        wp_send_json(['sucesso' => false, 'mensagem' => 'Parâmetros ausentes.']);
+    // 1) Smalot PdfParser (PHP puro)
+    try {
+        $parser = new \Smalot\PdfParser\Parser();
+        $texto = $parser->parseFile($arquivo)->getText();
+        $texto = trim(preg_replace('/\s+/u', ' ', $texto));
+        if ($texto !== '') {
+            return $texto;
+        }
+    } catch (\Throwable $e) {
+        error_log('rag_wp: Smalot falhou em ' . $arquivo . ' - ' . $e->getMessage());
     }
 
-    $paths = json_decode(stripslashes($_POST['paths']), true);
-    if (json_last_error() !== JSON_ERROR_NONE) {
-        $paths = is_array($_POST['paths']) ? $_POST['paths'] : (array) $_POST['paths'];
-    }
-
-    $paths = array_filter((array) $paths);
-    $pdfsParaJuntar = [];
-
-    foreach ($paths as $path) {
-        $cleanPath = realpath(trim(stripslashes($path), '"\''));
-        if ($cleanPath && file_exists($cleanPath)) {
-            $ext = strtolower(pathinfo($cleanPath, PATHINFO_EXTENSION));
-            if ($ext === 'pdf') {
-                $pdfsParaJuntar[] = '"' . $cleanPath . '"';
-            }
+    // 2) pdftotext (poppler-utils, instalado pelo docker-compose)
+    if (function_exists('shell_exec') && is_executable('/usr/bin/pdftotext')) {
+        $texto = shell_exec('/usr/bin/pdftotext -q -enc UTF-8 ' . escapeshellarg($arquivo) . ' - 2>/dev/null');
+        $texto = trim(preg_replace('/\s+/u', ' ', (string) $texto));
+        if ($texto !== '') {
+            return $texto;
         }
     }
 
-    if (empty($pdfsParaJuntar)) {
-        wp_send_json(['sucesso' => false, 'mensagem' => 'Nenhum PDF válido encontrado.']);
-    }
-
-    $destino = trim(stripslashes($_POST['destino']), '"\'');
-    $destPath = dirname($destino);
-
-    if (!file_exists($destPath)) {
-        wp_mkdir_p($destPath);
-    }
-
-    if (!is_writable($destPath)) {
-        wp_send_json(['sucesso' => false, 'mensagem' => 'Diretório de destino não tem permissão de escrita.']);
-    }
-
-    $destFile = $destino;
-
-    // Se o destino já existir, adiciona ele como o primeiro da fusão
-    if (file_exists($destFile)) {
-        $pdfsParaJuntar = array_merge(['"' . realpath($destFile) . '"'], $pdfsParaJuntar);
-    }
-
-    // Cria um arquivo temporário para saída
-    $tempOutput = tempnam(sys_get_temp_dir(), 'pdfmerge_') . '.pdf';
-    $destPath = escapeshellarg($tempOutput);
-
-    // Comando Ghostscript para fusão
-    $cmd = "gs -dBATCH -dNOPAUSE -q -sDEVICE=pdfwrite -sOutputFile=$destPath " . implode(' ', $pdfsParaJuntar);
-
-    exec($cmd, $output, $retorno);
-
-    if ($retorno !== 0 || !file_exists($tempOutput)) {
-        wp_send_json(['sucesso' => false, 'mensagem' => 'Erro ao executar Ghostscript: ' . implode("\n", $output)]);
-    }
-
-    // Move o arquivo temporário para o destino, sobrescrevendo
-    if (!rename($tempOutput, $destFile)) {
-        wp_send_json(['sucesso' => false, 'mensagem' => 'Falha ao mover PDF gerado para o destino.']);
-    }
-
-    $relPath = str_replace(ABSPATH, '', $destFile);
-    $urlFinal = site_url('/') . str_replace(DIRECTORY_SEPARATOR, '/', $relPath);
-
-    wp_send_json([
-        'sucesso' => true,
-        'url' => $urlFinal,
-        'caminho' => $destFile,
-        'arquivos' => count($pdfsParaJuntar)
-    ]);
+    return '';
 }
-add_action('wp_ajax_novoicode_exportar_pdf', 'novoicode_exportar_pdf');
 
 
-
-
-// Indexar PDF ****************************************************************************
-use Smalot\PdfParser\Parser;
-function novoicode_indexar_pdf()
+// Lista os PDFs de um post (recursivo) *******************************************************
+function rag_wp_listar_pdfs_post($post_id)
 {
-
-    if (!isset($_POST['arquivo'], $_POST['url'], $_POST['tipo'], $_POST['ano'], $_POST['id'])) {
-        wp_send_json_error(['msg' => 'Parâmetros ausentes']);
+    $base = rag_wp_attachments_dir($post_id);
+    if (!is_dir($base)) {
+        return [];
     }
 
-    // Set maximum execution time to prevent timeouts
-    set_time_limit(300); // 5 minutos
-
-    $parser = new Parser();
-    $arquivo = sanitize_text_field($_POST['arquivo']);
-    $url = esc_url_raw($_POST['url']);
-    $tipo = sanitize_text_field($_POST['tipo']);
-    $ano = sanitize_text_field($_POST['ano']);
-    $id = intval($_POST['id']);
-
-    $path = ABSPATH . "wp-content/uploads/$tipo/$ano/";
-
-    $subdirs = [];
-
-    foreach (scandir($path) as $item) {
-        if ($item === '.' || $item === '..')
+    $pdfs = [];
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($base, FilesystemIterator::SKIP_DOTS)
+    );
+    foreach ($iterator as $arquivo) {
+        // Ignora a lixeira/temporários do elFinder (pastas que começam com ".")
+        if (strpos($arquivo->getPathname(), '/.') !== false) {
             continue;
-
-        if (is_dir($path . $item)) {
-            $subdirs[] = $item;
+        }
+        if (strtolower($arquivo->getExtension()) === 'pdf') {
+            $pdfs[] = $arquivo->getPathname();
         }
     }
+    sort($pdfs);
+    return $pdfs;
+}
 
+
+// Remove do índice os PDFs de um post que não existem mais no disco ****************************
+function rag_wp_limpar_indice_post($post_id)
+{
     global $wpdb;
     $tabela = $wpdb->prefix . 'pdf_index';
 
-    $sql = $wpdb->prepare(
-        "SELECT * FROM $tabela WHERE tipo = %s AND ano = %d",
-        $tipo,
-        $ano
-    );
-
-    $results = $wpdb->get_results($sql);
-
-    $all_subdirs = [];
-
-    foreach ($results as $item) {
-        $all_subdirs[] = $item->id_post;
-    }
-
-    // Remove duplicatas
-    $all_subdirs_unicos = array_unique($all_subdirs);
-
-    // Descobre quais id_post estão no array2 mas não no array1
-    $id_post_para_apagar = array_diff($all_subdirs_unicos, $subdirs);
-
-    if (!empty($id_post_para_apagar)) { // Se houver itens para apagar
-        // Prepara os placeholders para a cláusula IN
-        $placeholders = implode(',', array_fill(0, count($id_post_para_apagar), '%d'));
-        $sql = "DELETE FROM $tabela WHERE id_post IN ($placeholders)";
-        $wpdb->query($wpdb->prepare($sql, ...$id_post_para_apagar));
-    }
-
-    // Busca todos os arquivos indexados
-    $arquivos = $wpdb->get_results("SELECT arquivo FROM $tabela where id_post = $id");
-
-    foreach ($arquivos as $item) {
-        $caminhoArquivo = $item->arquivo;
-        // Se o arquivo não existir mais, remove do banco
-        if (!file_exists($caminhoArquivo)) {
-            $wpdb->delete($tabela, ['arquivo' => $caminhoArquivo]);
-        }
-    }
-
-    // Verifica se já foi indexado
-    $jaIndexado = $wpdb->get_var(
-        $wpdb->prepare("SELECT COUNT(*) FROM $tabela WHERE arquivo = %s", $arquivo)
-    );
-
-    if ($jaIndexado > 0) {
-        // Verifica se o arquivo ainda existe
+    $arquivos = $wpdb->get_col($wpdb->prepare("SELECT arquivo FROM $tabela WHERE id_post = %d", $post_id));
+    $removidos = 0;
+    foreach ($arquivos as $arquivo) {
         if (!file_exists($arquivo)) {
-            // Arquivo foi removido, deleta a indexação
-            $wpdb->delete($tabela, ['arquivo' => $arquivo]);
-            wp_send_json_success(['msg' => 'Indexação removida, arquivo não existe mais']);
-        } else {
-            wp_send_json_success(['msg' => 'Já existia']);
-        }
-    } else {
-        // Arquivo não indexado ainda, tenta processar
-        if (!file_exists($arquivo)) {
-            wp_send_json_error(['msg' => 'Arquivo não encontrado']);
-        }
-
-        try {
-            $pdf = $parser->parseFile($arquivo);
-            $texto = $pdf->getText();
-            $texto = substr($texto, 0, 100000); // Limita o tamanho do texto
-
-            $wpdb->insert($tabela, [
-                'arquivo' => $arquivo,
-                'url' => $url,
-                'texto' => $texto,
-                'tipo' => $tipo,
-                'ano' => $ano,
-                'id_post' => $id
-            ]);
-            wp_send_json_success(['msg' => 'Indexado']);
-        } catch (Exception $e) {
-            wp_send_json_error(['msg' => 'Erro ao processar PDF: ' . $e->getMessage()]);
+            $removidos += (int) $wpdb->delete($tabela, ['arquivo' => $arquivo]);
         }
     }
+    return $removidos;
 }
-add_action('wp_ajax_novoicode_indexar_pdf', 'novoicode_indexar_pdf');
 
 
-
-
-// Listar PDF ****************************************************************************
-function novoicode_listar_pdfs()
+// Indexa um PDF (caminho absoluto, já validado) *******************************************
+// Retorna ['ok' => bool, 'msg' => string]
+function rag_wp_indexar_arquivo($post_id, $arquivo)
 {
-    if (!isset($_POST['tipo'], $_POST['ano'])) {
-        wp_send_json_error(['msg' => 'Parâmetros ausentes']);
+    global $wpdb;
+    $tabela = $wpdb->prefix . 'pdf_index';
+
+    $existe = $wpdb->get_var($wpdb->prepare("SELECT id FROM $tabela WHERE arquivo = %s", $arquivo));
+    if ($existe) {
+        return ['ok' => true, 'msg' => 'Já indexado'];
     }
 
-    $tipo = sanitize_text_field($_POST['tipo']);
-    $ano = sanitize_text_field($_POST['ano']);
-    $base_dir = ABSPATH . "wp-content/uploads/$tipo/$ano";
-
-    if (!file_exists($base_dir)) {
-        wp_send_json_error(['msg' => 'Diretório não encontrado']);
+    set_time_limit(300);
+    $texto = rag_wp_extrair_texto_pdf($arquivo);
+    if ($texto === '') {
+        return ['ok' => false, 'msg' => 'Não foi possível extrair texto (PDF escaneado?)'];
     }
 
-    $arquivos = [];
-    $urls = [];
-    $ids = [];
+    $relativo = substr($arquivo, strlen(rag_wp_attachments_dir($post_id)));
+    $url = rag_wp_attachments_url($post_id) . implode('/', array_map('rawurlencode', explode('/', $relativo)));
 
-    $subdirs = scandir($base_dir);
-    foreach ($subdirs as $subdir) {
-        if ($subdir === '.' || $subdir === '..')
+    $ok = $wpdb->insert($tabela, [
+        'id_post' => $post_id,
+        'arquivo' => $arquivo,
+        'url' => $url,
+        'texto' => $texto,
+        'indexado_em' => current_time('mysql'),
+    ], ['%d', '%s', '%s', '%s', '%s']);
+
+    if (!$ok) {
+        return ['ok' => false, 'msg' => 'Erro no banco: ' . $wpdb->last_error];
+    }
+    return ['ok' => true, 'msg' => 'Indexado (' . number_format_i18n(mb_strlen($texto)) . ' caracteres)'];
+}
+
+
+// Resolve um caminho relativo enviado pelo navegador, sem deixar sair da pasta do post ************
+function rag_wp_resolver_arquivo($post_id, $relativo)
+{
+    $base = realpath(rag_wp_attachments_dir($post_id));
+    $arquivo = realpath($base . '/' . ltrim($relativo, '/'));
+
+    if (!$base || !$arquivo || strpos($arquivo, $base . '/') !== 0 || !is_file($arquivo)) {
+        return false;
+    }
+    if (strtolower(pathinfo($arquivo, PATHINFO_EXTENSION)) !== 'pdf') {
+        return false;
+    }
+    return $arquivo;
+}
+
+
+// AJAX: indexar um PDF selecionado no elFinder **********************************************
+function rag_wp_ajax_indexar_pdf()
+{
+    check_ajax_referer('rag_wp_indexar', 'nonce');
+
+    $post_id = intval($_POST['post_id'] ?? 0);
+    if (!$post_id || !current_user_can('edit_post', $post_id)) {
+        wp_send_json_error(['msg' => 'Sem permissão']);
+    }
+
+    rag_wp_limpar_indice_post($post_id);
+
+    $arquivo = rag_wp_resolver_arquivo($post_id, wp_unslash($_POST['arquivo'] ?? ''));
+    if (!$arquivo) {
+        wp_send_json_error(['msg' => 'Arquivo inválido ou não encontrado']);
+    }
+
+    $r = rag_wp_indexar_arquivo($post_id, $arquivo);
+    $r['ok'] ? wp_send_json_success(['msg' => $r['msg']]) : wp_send_json_error(['msg' => $r['msg']]);
+}
+add_action('wp_ajax_rag_wp_indexar_pdf', 'rag_wp_ajax_indexar_pdf');
+
+
+// AJAX: lista de todos os PDFs anexados (página PDFParser) ************************************
+function rag_wp_ajax_listar_pdfs()
+{
+    check_ajax_referer('rag_wp_indexar', 'nonce');
+    if (!current_user_can('edit_others_posts')) {
+        wp_send_json_error(['msg' => 'Sem permissão']);
+    }
+
+    $itens = [];
+    foreach (glob(rag_wp_attachments_dir() . '/*', GLOB_ONLYDIR) as $dir) {
+        $post_id = intval(basename($dir));
+        if (!$post_id) {
             continue;
-
-        $full_path = $base_dir . '/' . $subdir;
-        if (!is_dir($full_path))
-            continue;
-
-        $id_post = is_numeric($subdir) ? intval($subdir) : 0;
-
-        $directory = new RecursiveDirectoryIterator($full_path, RecursiveDirectoryIterator::SKIP_DOTS);
-        $filter = new RecursiveCallbackFilterIterator($directory, function ($fileInfo) {
-            return !($fileInfo->isDir() && $fileInfo->getFilename() === 'privado');
-        });
-        $iterator = new RecursiveIteratorIterator($filter);
-
-        foreach ($iterator as $arquivo) {
-            if (pathinfo($arquivo, PATHINFO_EXTENSION) === 'pdf') {
-                $arquivos[] = (string) $arquivo;
-                $subpath = str_replace(ABSPATH, '', (string) $arquivo);
-                $url_pdf = '/' . str_replace('\\', '/', $subpath);
-                $urls[] = esc_url($url_pdf);
-                $ids[] = $id_post;
-            }
+        }
+        rag_wp_limpar_indice_post($post_id);
+        foreach (rag_wp_listar_pdfs_post($post_id) as $arquivo) {
+            $itens[] = [
+                'post_id' => $post_id,
+                'arquivo' => substr($arquivo, strlen($dir) + 1),
+            ];
         }
     }
 
-    wp_send_json_success([
-        'arquivos' => $arquivos,
-        'urls' => $urls,
-        'ids' => $ids,
-        'total' => count($arquivos),
-    ]);
+    wp_send_json_success(['itens' => $itens]);
 }
-add_action('wp_ajax_novoicode_listar_pdfs', 'novoicode_listar_pdfs');
+add_action('wp_ajax_rag_wp_listar_pdfs', 'rag_wp_ajax_listar_pdfs');
 
 
+// Ao excluir o post definitivamente, apaga o índice (os arquivos ficam no disco) ****************
+function rag_wp_excluir_indice_post($post_id)
+{
+    global $wpdb;
+    $wpdb->delete($wpdb->prefix . 'pdf_index', ['id_post' => $post_id], ['%d']);
+}
+add_action('before_delete_post', 'rag_wp_excluir_indice_post');

@@ -25,6 +25,9 @@ wordpress/*.txt
 wordpress/*.html
 wordpress/*.sql
 
+# Uploads (PDFs anexados aos posts e mídia): ficam só no servidor
+wordpress/wp-content/uploads/
+
 # Plugins: só o rag_wp vai para o GitHub (os demais são instalados pelo painel)
 wordpress/wp-content/plugins/*
 !wordpress/wp-content/plugins/rag_wp/

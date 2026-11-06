@@ -56,6 +56,8 @@ services:
     volumes:
       # Pasta vazia na primeira subida: a imagem copia o WordPress para cá
       - ./wordpress:/var/www/html
+      # Limites de upload/tempo do PHP (PDFs grandes e indexação)
+      - ./php/uploads.ini:/usr/local/etc/php/conf.d/uploads.ini:ro
     environment:
       WORDPRESS_DB_HOST: db:3306
       WORDPRESS_DB_USER: ${MYSQL_USER}

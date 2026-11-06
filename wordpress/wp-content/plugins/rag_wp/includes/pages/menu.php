@@ -1,43 +1,24 @@
 <?php
-//Arquivo: wp-content/plugins/novoicode/includes/pages/menu.php
+// Arquivo: wp-content/plugins/rag_wp/includes/pages/menu.php
 
-// ***************** Add in Menu ******************************************************************
-function menu_icode()
-{
-    add_menu_page('ICODE', 'ICODE', 'edit_posts', 'icode', 'function_about', 'dashicons-screenoptions', 1);
-    add_submenu_page('icode', 'Acessos', 'Acessos', 'edit_posts', 'icode_acessos', 'function_acessos', 2);
-    add_submenu_page('icode', 'PDFParser', 'PDFParser', 'edit_posts', 'icode_pdfparser', 'function_pdfparser', 3);
-    add_submenu_page('icode', 'E-Mails', 'E-Mails', 'edit_posts', 'icode_emails', 'function_emails', 3);
-    add_submenu_page('icode', 'Sincronizar Usuários', 'Sincronizar Usuários', 'manage_options', 'icode_sync', 'function_sync', 4);
-
+if (!defined('ABSPATH')) {
+    exit;
 }
 
-add_action('admin_menu', 'menu_icode');
+function rag_wp_menu()
+{
+    add_menu_page('RAG WP', 'RAG WP', 'edit_posts', 'rag_wp', 'rag_wp_page_about', 'dashicons-media-document', 3);
+    add_submenu_page('rag_wp', 'Sobre', 'Sobre', 'edit_posts', 'rag_wp', 'rag_wp_page_about');
+    add_submenu_page('rag_wp', 'PDFParser', 'PDFParser', 'edit_others_posts', 'rag_wp_pdfparser', 'rag_wp_page_pdfparser');
+}
+add_action('admin_menu', 'rag_wp_menu');
 
-// ***************** Add About ************************************************************
-function function_about()
+function rag_wp_page_about()
 {
-    include ABSPATH . '/wp-content/plugins/novoicode/includes/pages/about.php';
-}
-// ***************** Add Acessos ***************************************************************
-function function_acessos()
-{
-    include ABSPATH . '/wp-content/plugins/novoicode/includes/pages/acessos.php';
-}
-// ***************** Add page pdfparser ******************************************************
-function function_pdfparser()
-{
-    include ABSPATH . '/wp-content/plugins/novoicode/includes/pages/pdfparser.php';
+    include RAG_WP_DIR . 'includes/pages/about.php';
 }
 
-// ***************** Add page emails ******************************************************
-function function_emails()
+function rag_wp_page_pdfparser()
 {
-    include ABSPATH . '/wp-content/plugins/novoicode/includes/pages/emails.php';
-}
-
-// ***************** Add page sync ******************************************************
-function function_sync()
-{
-    include ABSPATH . '/wp-content/plugins/novoicode/includes/pages/sync.php';
+    include RAG_WP_DIR . 'includes/pages/pdfparser.php';
 }

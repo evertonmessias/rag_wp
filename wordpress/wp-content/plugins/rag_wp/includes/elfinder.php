@@ -1,268 +1,121 @@
 <?php
-// Arquivo: wp-content/plugins/novoicode/includes/elfinder.php
+// Arquivo: wp-content/plugins/rag_wp/includes/elfinder.php
+// elFinder do Gerenciador de Anexos. Tudo passa pelo admin-ajax.php (exige login):
+//   ?action=rag_wp_arquivos&post_id=ID   -> página do elFinder (carregada no iframe do meta box)
+//   ?action=rag_wp_elfinder&post_id=ID   -> connector PHP do elFinder
+// Raiz única: /wp-content/uploads/attachments/{ID}/
 
-require_once($_SERVER['DOCUMENT_ROOT'] . '/wp-load.php');
-
-if (!is_user_logged_in()) {
-    http_response_code(403);
-    exit('Acesso negado');
+if (!defined('ABSPATH')) {
+    exit;
 }
 
-require_once ABSPATH . 'wp-content/plugins/novoicode/includes/elFinder/php/autoload.php';
+// Valida o post e a permissão; retorna o ID ou encerra
+function rag_wp_elfinder_post_id()
+{
+    $post_id = intval($_GET['post_id'] ?? 0);
 
-use elFinder;
-use elFinderConnector;
-use elFinderVolumeLocalFileSystem;
-
-$current_user = wp_get_current_user();
-$user_roles = $current_user->roles;
-
-$is_admin = in_array('administrator', $user_roles);
-$is_editor = in_array('editor', $user_roles);
-$is_subscriber = in_array('subscriber', $user_roles);
-
-$post_id_raw = $_GET['post_id'] ?? '';
-$ano = $_GET['ano'] ?? '';
-$tipo = sanitize_text_field($_GET['tipo'] ?? '');
-
-// DEBUG: Log dos parâmetros recebidos
-error_log("elFinder Params - tipo: $tipo, ano: $ano, post_id: $post_id_raw");
-
-$modo_geral = empty($tipo) && empty($ano) && empty($post_id_raw);
-
-// CORREÇÃO: Admin e editor têm acesso a todos os tipos
-if ($is_admin || $is_editor) {
-    $tipos_permitidos = get_tipos_configurados(); // Todos os tipos configurados
-    $user_membro_arquivo_privado = get_tipos_configurados(); // Acesso total a arquivos privados
-} else {
-    $tipos_permitidos = get_user_meta($current_user->ID, 'membro', true);
-    if (!is_array($tipos_permitidos)) {
-        $tipos_permitidos = [];
+    if (!$post_id || !get_post($post_id)) {
+        wp_die('Post inválido.', '', ['response' => 400]);
     }
-    
-    $membro_arquivo_privado = get_user_meta($current_user->ID, 'membro_arquivo_privado', true);
-    $user_membro_arquivo_privado = is_array($membro_arquivo_privado) ? $membro_arquivo_privado : [];
+    if (!current_user_can('edit_post', $post_id)) {
+        wp_die('Acesso negado.', '', ['response' => 403]);
+    }
+    if (!is_dir(rag_wp_attachments_dir($post_id))) {
+        wp_die('Salve o post para criar a pasta de anexos.', '', ['response' => 404]);
+    }
+    return $post_id;
 }
 
-$wp_upload_dir = wp_upload_dir();
-$roots = [];
 
-// MODO GERAL - Exibe diretórios dos tipos
-if ($modo_geral) {
-    error_log("elFinder: Modo Geral Ativado");
-    
-    foreach ($tipos_permitidos as $tipo_dir) {
-        $tipo_path = trailingslashit($wp_upload_dir['basedir']) . $tipo_dir . '/';
-        $tipo_url = trailingslashit($wp_upload_dir['baseurl']) . $tipo_dir . '/';
+// Connector ***************************************************************************************
+function rag_wp_elfinder_connector()
+{
+    $post_id = rag_wp_elfinder_post_id();
 
-        if (!is_dir($tipo_path)) {
-            error_log("elFinder: Diretório não encontrado - $tipo_path");
-            continue;
-        }
+    require_once RAG_WP_DIR . 'includes/elFinder/php/autoload.php';
 
-        $roots[] = [
+    $opts = [
+        'roots' => [[
             'driver' => 'LocalFileSystem',
-            'path' => $tipo_path,
-            'URL' => $tipo_url,
+            'alias' => 'Anexos',
+            'path' => rag_wp_attachments_dir($post_id) . '/',
+            'URL' => rag_wp_attachments_url($post_id) . '/',
+            'mimeDetect' => 'internal',
             'uploadDeny' => ['all'],
             'uploadAllow' => ['application/pdf'],
             'uploadOrder' => ['deny', 'allow'],
-            'accessControl' => function ($attr, $path, $data, $volume) use ($modo_geral, $is_admin, $is_editor, $is_subscriber) {
-                if (strpos(basename($path), '.') === 0) {
-                    return !($attr === 'read' || $attr === 'write');
-                }
+            'disabled' => ['mkfile', 'edit', 'archive', 'extract', 'resize', 'netmount'],
+            'attributes' => [[
+                // Esconde arquivos ocultos e qualquer .php
+                'pattern' => '/(^|\/)\.|\.php$/i',
+                'read' => false,
+                'write' => false,
+                'hidden' => true,
+                'locked' => true,
+            ]],
+        ]],
+    ];
 
-                // Verifica se é uma pasta "privado"
-                if (strpos($path, '/privado') !== false) {
-                    // CORREÇÃO: Admin e editor têm acesso total a privado
-                    if ($is_admin || $is_editor) {
-                        return null; // Acesso total
-                    }
-                    
-                    $membro_arquivo_privado = get_user_meta(wp_get_current_user()->ID, 'membro_arquivo_privado', true);
-                    // Bloqueia acesso total se não tiver permissão
-                    if (!$membro_arquivo_privado) {
-                        return false;
-                    }
-                }
-
-                if ($modo_geral) {
-                    if ($is_admin) {
-                        return null;
-                    }
-                    if ($is_subscriber || $is_editor) {
-                        return $attr === 'read'; // somente leitura
-                    }
-                }
-
-                return null;
-            },
-            'attributes' => [
-                [
-                    'pattern' => '/\.php$/i',
-                    'read' => false,
-                    'write' => false,
-                    'hidden' => true,
-                    'locked' => true,
-                ]
-            ],
-        ];
-    }
-} else {
-    // MODO DIRECIONADO
-    error_log("elFinder: Modo Direcionado - tipo: $tipo, ano: $ano, post_id: $post_id_raw");
-    
-    // VALIDAÇÃO CORRIGIDA: Mais flexível
-    if (empty($tipo) || empty($ano) || empty($post_id_raw)) {
-        error_log("elFinder: Parâmetros insuficientes para modo direcionado");
-        http_response_code(400);
-        exit('Parâmetros insuficientes');
-    }
-    
-    // CORREÇÃO: Admin e editor não passam por validação de tipo
-    if (!$is_admin && !$is_editor) {
-        // Verifica se o usuário normal tem acesso ao tipo
-        if (!in_array($tipo, $tipos_permitidos)) {
-            error_log("elFinder: Usuário não tem acesso ao tipo $tipo. Tipos permitidos: " . implode(',', $tipos_permitidos));
-            http_response_code(403);
-            exit('Acesso negado para este tipo');
-        }
-    }
-
-    // TRATAMENTO CORRIGIDO do post_id
-    $post_id_str = ($post_id_raw === 'outros') ? 'outros' : $post_id_raw;
-    
-    // Valida se é numérico ou 'outros'
-    if ($post_id_str !== 'outros' && !is_numeric($post_id_str)) {
-        error_log("elFinder: post_id inválido - $post_id_raw");
-        http_response_code(400);
-        exit('Parâmetro post_id inválido');
-    }
-
-    $basePath = trailingslashit($wp_upload_dir['basedir']) . "$tipo/$ano/$post_id_str/";
-    $baseURL = trailingslashit($wp_upload_dir['baseurl']) . "$tipo/$ano/$post_id_str/";
-
-    error_log("elFinder: Base Path - $basePath");
-
-    if (!is_dir($basePath)) {
-        error_log("elFinder: Criando diretório - $basePath");
-        $created = wp_mkdir_p($basePath);
-        if (!$created || !is_dir($basePath)) {
-            error_log("elFinder: Falha ao criar diretório - $basePath");
-            http_response_code(500);
-            exit("Falha ao criar diretório base: $basePath");
-        }
-    }
-
-    // Cria subdiretórios padrão se não existirem
-    $subdirs_padrao = ['ata', 'deliberacoes', 'pautas', 'privado'];
-    foreach ($subdirs_padrao as $subdir) {
-        $subdir_path = $basePath . $subdir . '/';
-        if (!is_dir($subdir_path)) {
-            wp_mkdir_p($subdir_path);
-        }
-    }
-
-    $subdirs = array_filter(glob($basePath . '*'), 'is_dir');
-    error_log("elFinder: Subdiretórios encontrados - " . implode(', ', $subdirs));
-
-    foreach ($subdirs as $subdir) {
-        $nomePasta = basename($subdir);
-
-        // CORREÇÃO: Admin e editor têm acesso a todas as pastas privado
-        if ($nomePasta === 'privado') {
-            if (!$is_admin && !$is_editor) {
-                // Usuário normal: verifica permissão
-                if (!in_array($tipo, $user_membro_arquivo_privado)) {
-                    error_log("elFinder: Usuário não tem acesso à pasta privado do tipo $tipo");
-                    continue;
-                }
-            }
-            // Admin e editor: sempre têm acesso
-        }
-
-        $path = trailingslashit($subdir);
-        $url = trailingslashit($baseURL . $nomePasta);
-
-        error_log("elFinder: Adicionando root - $path");
-
-        $roots[] = [
-            'driver' => 'LocalFileSystem',
-            'alias' => $nomePasta, // Nome amigável para exibição
-            'path' => $path,
-            'URL' => $url,
-            'uploadDeny' => ['all'],
-            'uploadAllow' => [
-                'application/pdf',
-                'application/msword',
-                'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-            ],
-            'uploadOrder' => ['deny', 'allow'],
-            'accessControl' => function ($attr, $path, $data, $volume) use ($is_admin, $is_editor) {
-                if (strpos(basename($path), '.') === 0) {
-                    return !($attr === 'read' || $attr === 'write');
-                }
-
-                // Fora do modo geral: editor/admin pode editar, outros só leitura
-                if (!$is_admin && !$is_editor) {
-                    return $attr === 'read';
-                }
-
-                return null;
-            },
-            'attributes' => [
-                [
-                    'pattern' => '/\.php$/i',
-                    'read' => false,
-                    'write' => false,
-                    'hidden' => true,
-                    'locked' => true,
-                ]
-            ],
-        ];
-    }
-}
-
-// ===================== PERMISSÕES DE COMANDOS =====================
-$disabledCommands = [];
-
-if ($modo_geral) {
-    if ($is_admin) {
-        $disabledCommands = []; // Total acesso
-    } elseif ($is_editor) {
-        $disabledCommands = ['mkdir']; 
-    } else {
-        // assinante (ou outro papel): somente leitura
-        $disabledCommands = ['mkdir', 'mkfile', 'paste', 'rm', 'rename', 'upload', 'copy', 'cut'];
-    }
-} else {
-    // fora do modo geral: apenas assinante tem bloqueios
-    if (!$is_admin && !$is_editor) {
-        $disabledCommands = ['mkdir', 'mkfile', 'paste', 'rm', 'rename', 'upload', 'copy', 'cut'];
-    }
-}
-
-error_log("elFinder: Comandos desabilitados - " . implode(', ', $disabledCommands));
-error_log("elFinder: Número de roots - " . count($roots));
-
-// ===================== INICIALIZA =====================
-if (empty($roots)) {
-    error_log("elFinder: Nenhum root configurado - retornando 404");
-    http_response_code(404);
-    exit('Nenhum diretório disponível para acesso');
-}
-
-$opts = [
-    'roots' => $roots,
-    'disabled' => $disabledCommands,
-    'debug' => true, // Ativa debug do elFinder
-];
-
-try {
     $connector = new elFinderConnector(new elFinder($opts));
-    $connector->run();
-} catch (Exception $e) {
-    error_log("elFinder Exception: " . $e->getMessage());
-    http_response_code(500);
-    exit('Erro interno do servidor');
+    $connector->run(); // envia a resposta e encerra
 }
+add_action('wp_ajax_rag_wp_elfinder', 'rag_wp_elfinder_connector');
+
+
+// Página do elFinder (iframe) *************************************************************************
+function rag_wp_elfinder_pagina()
+{
+    $post_id = rag_wp_elfinder_post_id();
+    $elfinder = RAG_WP_URL . 'includes/elFinder/';
+
+    $config = [
+        'connector' => add_query_arg(['action' => 'rag_wp_elfinder', 'post_id' => $post_id], admin_url('admin-ajax.php')),
+        'ajax' => admin_url('admin-ajax.php'),
+        'nonce' => wp_create_nonce('rag_wp_indexar'),
+        'postId' => $post_id,
+    ];
+
+    nocache_headers();
+    header('Content-Type: text/html; charset=utf-8');
+    ?>
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8">
+    <title>Anexos do post <?php echo $post_id; ?></title>
+
+    <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/smoothness/jquery-ui.css">
+    <link rel="stylesheet" href="<?php echo esc_url($elfinder . 'css/elfinder.min.css'); ?>">
+    <link rel="stylesheet" href="<?php echo esc_url($elfinder . 'css/theme.css'); ?>">
+    <link rel="stylesheet" href="<?php echo esc_url(RAG_WP_URL . 'assets/css/rag_wp.css'); ?>">
+
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://code.jquery.com/ui/1.13.2/jquery-ui.min.js"></script>
+    <script src="<?php echo esc_url($elfinder . 'js/elfinder.min.js'); ?>"></script>
+    <script src="<?php echo esc_url($elfinder . 'js/i18n/elfinder.pt_BR.js'); ?>"></script>
+</head>
+<body class="rag-wp-frame">
+    <div id="elfinder"></div>
+
+    <!-- Progresso da indexação -->
+    <div id="rag-wp-index" class="rag-wp-index" hidden>
+        <div class="rag-wp-index-box">
+            <div class="rag-wp-index-head">
+                <strong>Indexando PDFs</strong>
+                <button type="button" id="rag-wp-index-fechar" title="Fechar">&times;</button>
+            </div>
+            <div class="rag-wp-barra"><div id="rag-wp-barra"></div></div>
+            <ul id="rag-wp-index-status"></ul>
+        </div>
+    </div>
+
+    <script>
+        window.RAG_WP = <?php echo wp_json_encode($config); ?>;
+    </script>
+    <script src="<?php echo esc_url(RAG_WP_URL . 'assets/js/rag_wp_elfinder.js'); ?>"></script>
+</body>
+</html>
+    <?php
+    exit;
+}
+add_action('wp_ajax_rag_wp_arquivos', 'rag_wp_elfinder_pagina');
