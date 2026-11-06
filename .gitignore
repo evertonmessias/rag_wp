@@ -25,8 +25,12 @@ wordpress/*.txt
 wordpress/*.html
 wordpress/*.sql
 
+# Plugins: só o rag_wp vai para o GitHub (os demais são instalados pelo painel)
+wordpress/wp-content/plugins/*
+!wordpress/wp-content/plugins/rag_wp/
+
 # Logs do plugin (gerados no servidor, não sobem no commit)
-wordpress/wp-content/plugins/*/includes/src/logs/*.log
+wordpress/wp-content/plugins/rag_wp/includes/src/logs/*.log
 
 # Chat de IA (wordpress/ia): o código vai para o Git; logs e cache gerados no servidor, não
 wordpress/ia/*.log
@@ -34,6 +38,4 @@ wordpress/ia/debug.txt
 __pycache__/
 
 # Arquivos padrão que o WordPress recria a cada instalação
-wordpress/wp-content/plugins/akismet/
-wordpress/wp-content/plugins/hello.php
 wordpress/wp-content/themes/twenty*/
