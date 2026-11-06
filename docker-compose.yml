@@ -63,6 +63,10 @@ services:
       WORDPRESS_DB_USER: ${MYSQL_USER}
       WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
       WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
+      # Os arquivos são do usuário do host (everton) e o Apache roda como www-data (ACL dá escrita).
+      # Sem isso o WordPress acha que não pode gravar e pede FTP para atualizar/instalar plugins.
+      WORDPRESS_CONFIG_EXTRA: |
+        define('FS_METHOD', 'direct');
       # Disponíveis para os scripts Python (RAG) via variáveis de ambiente
       POSTGRES_HOST: postgres
       POSTGRES_DB: ${POSTGRES_DB}
