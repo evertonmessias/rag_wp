@@ -1,0 +1,113 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: rag_wp_db
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      - "127.0.0.1:${MYSQL_PORT}:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -P 3306 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: rag_wp_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Roda só na primeira subida (volume vazio): habilita a extensão pgvector
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  wordpress:
+    image: wordpress:beta-php8.5-apache
+    container_name: rag_wp_wp
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${WP_PORT}:80"
+    volumes:
+      # Pasta vazia na primeira subida: a imagem copia o WordPress para cá
+      - ./wordpress:/var/www/html
+    environment:
+      WORDPRESS_DB_HOST: db:3306
+      WORDPRESS_DB_USER: ${MYSQL_USER}
+      WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
+      WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
+      # Disponíveis para os scripts Python (RAG) via variáveis de ambiente
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    # Instala Python e dependências só quando faltam (container novo).
+    # Em um restart do mesmo container, os pacotes já estão lá e a etapa é pulada.
+    # O script precisa ser UM único item da lista. Se "command" for uma string,
+    # o Compose quebra o texto em palavras e o sh -c só executa a primeira ("set").
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        if command -v pdftotext >/dev/null 2>&1 && python3 -c "import requests, pymysql, psycopg2" 2>/dev/null; then
+          echo "Dependências Python já instaladas"
+        else
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            python3 \
+            python3-requests \
+            python3-pymysql \
+            python3-psycopg2 \
+            poppler-utils
+          rm -rf /var/lib/apt/lists/*
+          python3 -c "import requests, pymysql, psycopg2; print('Dependências Python OK')"
+        fi
+        a2enmod headers
+        # Garante que o Python (rodando como www-data) consiga gravar o log da IA,
+        # mesmo num clone novo onde o debug.log não existe (está no .gitignore).
+        mkdir -p /var/www/html/ia
+        touch /var/www/html/ia/debug.log
+        chown www-data:www-data /var/www/html/ia /var/www/html/ia/debug.log
+        exec docker-entrypoint.sh apache2-foreground
+
+  # Visualizador de logs em tempo real no navegador: http://localhost:${DOZZLE_PORT}
+  dozzle:
+    image: amir20/dozzle:latest
+    container_name: rag_wp_logs
+    restart: always
+    ports:
+      - "127.0.0.1:${DOZZLE_PORT}:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      DOZZLE_FILTER: "name=rag_wp_"
+
+volumes:
+  db_data:
+  postgres_data:

@@ -1,0 +1,39 @@
+# Segredos e dados locais (nunca sobem para o GitHub)
+.env
+*.sql
+*.sql.gz
+*.dump
+!postgres/init/*.sql
+
+# Wordpress - ignore:
+wordpress/bkp
+wordpress/stats
+wordpress/wp-admin
+wordpress/wp-includes
+wordpress/wp-content/a*
+wordpress/wp-content/l*
+wordpress/wp-content/w*
+wordpress/wp-content/*.php
+wordpress/wp-content/*.log
+wordpress/wp-content/themes/index.php
+wordpress/w*.php
+!wordpress/wp-config.php
+wordpress/index.php
+wordpress/xmlrpc.php
+wordpress/*.bkp
+wordpress/*.txt
+wordpress/*.html
+wordpress/*.sql
+
+# Logs do plugin (gerados no servidor, não sobem no commit)
+wordpress/wp-content/plugins/*/includes/src/logs/*.log
+
+# Chat de IA (wordpress/ia): o código vai para o Git; logs e cache gerados no servidor, não
+wordpress/ia/*.log
+wordpress/ia/debug.txt
+__pycache__/
+
+# Arquivos padrão que o WordPress recria a cada instalação
+wordpress/wp-content/plugins/akismet/
+wordpress/wp-content/plugins/hello.php
+wordpress/wp-content/themes/twenty*/
